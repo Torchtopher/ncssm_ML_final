@@ -61,14 +61,14 @@ frames, and fixed at 0.1 thereafter. We trained for a total of 10 million frames
 memory of one million most recent frames. '''
 
 EPSILON = 1.0
-EPOCHS = 100
+EPOCHS = 100_000_000
 MAX_REPLAY_SIZE = 1_000_000
 MIN_EPSILON = 0.1
 MINIBATCH_SIZE = 32
 MAX_GAME_LEN = 42 # can't be more than 42 moves
 #NUM_ENVS = 2 ** 10
 NUM_ENVS = 1
-LEARNING_RATE = 0.001 
+LEARNING_RATE = 0.1 
 GAMMA = 0.99 # looks forward 100 steps, which should be more than enough
 
 '''
@@ -130,7 +130,7 @@ if __name__ == '__main__':
     profiler = cProfile.Profile()
     timer = ProfilingTimer()
 
-    profiler.enable()
+    #profiler.enable()
 
     env_name = 'puffer_connect4'
     env_creator = pufferlib.ocean.env_creator(env_name)
