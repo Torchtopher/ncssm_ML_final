@@ -17,6 +17,7 @@ import atexit
 import datetime
 import signal
 from sys import exit
+from DQN import DQN
 
 device = torch.device(
     "cuda" if torch.cuda.is_available() else
@@ -59,23 +60,6 @@ class ReplayMemory():
             self.dones[indices]
         )
 
-class DQN(nn.Module):
-    def __init__(self, obs_size=42, action_size=7):
-        super().__init__()
-        print(f"Using obs size {obs_size} and action size {action_size}")
-        self.flatten = nn.Flatten()
-        self.model = nn.Sequential(
-            nn.Linear(obs_size, 512), # 7*6 42 spaces avaiable
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, action_size), # 7 spaces to play
-        )
-
-    def forward(self, x):
-        x = self.flatten(x)
-        logits = self.model(x) # logits here because the values are straight from the model, not softmaxxed or normalized
-        return logits
 
 class ProfilingTimer:
     """Simple timing context manager and accumulator"""
@@ -124,7 +108,7 @@ MIN_EPSILON = 0.1
 MINIBATCH_SIZE = 64
 MAX_GAME_LEN = 42 # can't be more than 42 moves
 #NUM_ENVS = 2 ** 10
-NUM_ENVS = 128
+NUM_ENVS = 256
 LEARNING_RATE = 1e-4 
 GAMMA = 0.99 # looks forward 100 steps, which should be more than enough
 
@@ -177,7 +161,7 @@ if __name__ == '__main__':
     with timer("env_initialization"):
         vecenv = pufferlib.vector.make(env_creator, num_envs=10, num_workers=10, batch_size=1,
             #backend=pufferlib.vector.Multiprocessing, env_kwargs={'num_envs': NUM_ENVS})
-            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS, "size": 3})
+            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS, "size": 5})
 
     # vecenv = pufferlib.ocean.make_bandit()
     # print(vecenv)
@@ -289,7 +273,6 @@ if __name__ == '__main__':
 
             with timer("q_target_computation"):
                 with torch.no_grad():
-                    # Convert pre-built arrays to tensors (much faster than list operations)
                     non_terminal_mask = torch.from_numpy(done_mask).unsqueeze(1).to(device)
                     phi_j_plus_1 = torch.from_numpy(next_states).to(device)
 
