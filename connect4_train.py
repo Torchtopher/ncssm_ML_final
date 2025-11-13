@@ -13,7 +13,10 @@ import time
 import cProfile
 import pstats
 from io import StringIO
-
+import atexit
+import datetime
+import signal
+from sys import exit
 
 device = torch.device(
     "cuda" if torch.cuda.is_available() else
@@ -22,25 +25,44 @@ device = torch.device(
 
 Transition = namedtuple('Transition', ('state', 'action', 'new_state', 'reward'))
 
+# don't use random.sample on deque! this is what SB3 uses (i think)
 class ReplayMemory():
-    def __init__(self, size):
-        self.history = deque([], maxlen=size)
-
+    def __init__(self, size, obs_shape):
+        self.capacity = size
+        self.states = np.empty((size, obs_shape), dtype=np.float32)
+        self.actions = np.empty(size, dtype=np.int64)
+        self.rewards = np.empty(size, dtype=np.float32)
+        self.next_states = np.empty((size, obs_shape), dtype=np.float32)
+        self.dones = np.empty(size, dtype=np.float32)
+        self.position = 0
+        self.size = 0
+    
     def add_experince(self, transition: Transition):
-        assert type(transition) == Transition
-        self.history.append(transition)
-
+        idx = self.position
+        self.states[idx] = transition.state
+        self.actions[idx] = transition.action
+        self.rewards[idx] = transition.reward
+        self.next_states[idx] = transition.new_state if transition.new_state is not None else 0
+        self.dones[idx] = 0 if transition.new_state is None else 1
+        self.position = (self.position + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
+    
     def sample(self, n):
-        if len(self.history) < n:
+        if self.size < n:
             return False
-        return random.sample(self.history, n)
-
-    def __len__(self):
-        return len(self.history)
+        indices = np.random.randint(0, self.size, size=n)
+        return (
+            self.states[indices],
+            self.actions[indices],
+            self.rewards[indices],
+            self.next_states[indices],
+            self.dones[indices]
+        )
 
 class DQN(nn.Module):
     def __init__(self, obs_size=42, action_size=7):
         super().__init__()
+        print(f"Using obs size {obs_size} and action size {action_size}")
         self.flatten = nn.Flatten()
         self.model = nn.Sequential(
             nn.Linear(obs_size, 512), # 7*6 42 spaces avaiable
@@ -108,6 +130,8 @@ GAMMA = 0.99 # looks forward 100 steps, which should be more than enough
 
 np.random.seed(42)
 torch.random.manual_seed(42)
+random.seed(42)
+torch.cuda.manual_seed(42)
 
 '''
 1. Initialize replay memory D to capacity N 
@@ -129,51 +153,65 @@ torch.random.manual_seed(42)
 end for
 '''
 
+def recent_reward(rewards: deque):
+    return round(np.mean([success_rate[i] for i in range(0, 50)]), 3) 
+
+def save_model(_, __):
+    model_path = f"models/{env_name}_{recent_reward(success_rate)}_{datetime.datetime.now()}.pt"
+    print(f"Saving model to {model_path}")
+    torch.save(policy, model_path)
+    exit(0)
 
 if __name__ == '__main__':
     # Create profiler and timer
     profiler = cProfile.Profile()
     timer = ProfilingTimer()
 
+    signal.signal(signal.SIGINT, save_model) # ctlr + c
     #profiler.enable()
 
     # connect 4!! 
-    env_name = 'puffer_connect4'
+    env_name = 'puffer_squared'
     env_creator = pufferlib.ocean.env_creator(env_name)
 
     with timer("env_initialization"):
         vecenv = pufferlib.vector.make(env_creator, num_envs=10, num_workers=10, batch_size=1,
             #backend=pufferlib.vector.Multiprocessing, env_kwargs={'num_envs': NUM_ENVS})
-            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS})
+            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS, "size": 3})
 
-
+    # vecenv = pufferlib.ocean.make_bandit()
+    # print(vecenv)
+    # print(type(vecenv))
+    # print(vecenv.__dict__)
     with timer("initial_reset"):
         obs, _ = vecenv.reset()
 
     total_steps = 0
-    # actions = [3] * NUM_ENVS
-    # for i in range(2):
-    #     obs, rewards, terminals, truncations, infos = vecenv.step(actions)
-    # print(obs)
-    # for row in obs[0]:
-    #     print(row)
-    # print(len(obs[0]))
-    # exit()
 
     # 1.
     with timer("replay_memory_init"):
         replay = ReplayMemory(MAX_REPLAY_SIZE)
 
-    print(vecenv.single_observation_space)
-    print(vecenv.single_action_space)
-    exit()
     # 2.
     with timer("model_initialization"):
-        policy = DQN().to(device) # put on gpu
+        policy = DQN(obs_size=vecenv.single_observation_space.shape[0], action_size=vecenv.single_action_space.n).to(device) # put on gpu
         optimizer = optim.AdamW(policy.parameters(), lr=LEARNING_RATE, amsgrad=True)
         criterion = nn.MSELoss()
+    with timer("initial_reset"):
+        obs, _ = vecenv.reset()
+
+    # Pre-allocate batch arrays outside the loop for performance
+    obs_shape = vecenv.single_observation_space.shape[0]
+    batch_states = np.empty((MINIBATCH_SIZE, obs_shape), dtype=np.float32)
+    batch_actions = np.empty(MINIBATCH_SIZE, dtype=np.int64)
+    batch_rewards = np.empty(MINIBATCH_SIZE, dtype=np.float32)
+    batch_new_states = np.empty((MINIBATCH_SIZE, obs_shape), dtype=np.float32)
+    batch_non_terminal_mask = np.empty(MINIBATCH_SIZE, dtype=np.float32)
+
     #print(policy)
-    success_rate = []
+    success_rate = deque(maxlen=1000)
+    for i in range(50):
+        success_rate.append(0)
     # 3.
     wins = 0
     losses = 1
@@ -182,14 +220,14 @@ if __name__ == '__main__':
             obs, _ = vecenv.reset()
         #print(f"intial obs {obs}")
 
-        success_rate.append(wins / (wins + losses))
+        success_rate.appendleft(wins / (wins + losses))
         wins = 0
         losses = 1
         # 6.
         for _ in range(MAX_GAME_LEN):
             with timer("action_selection"):
                 if random.random() <= EPSILON:
-                    actions = np.random.randint(0, 7, (NUM_ENVS))
+                    actions = np.random.randint(0, vecenv.single_action_space.n, (NUM_ENVS))
                     #print(actions.shape)
                 else:
                     # argmax Q
@@ -201,17 +239,22 @@ if __name__ == '__main__':
                         actions = torch.argmax(policy(batch_obs), dim=1).cpu() # index 0-6 is actual the action too
 
             # lower over 1m frames
-            EPSILON = max(MIN_EPSILON, EPSILON - (1.0 - MIN_EPSILON) / 1_000_000)
+            EPSILON = max(MIN_EPSILON, EPSILON - (1.0 - MIN_EPSILON) / 1_000_0)
+            if recent_reward(success_rate) > 0.8:
+                EPSILON = 0.0
             old_obs = obs.copy()
             # 8.
             total_steps += 1
             if total_steps % 100 == 0:
                 print(f"Total steps {total_steps}")
-                print(f"Success rate {np.mean(success_rate[-50:])}")
+                print(f"Success rate {recent_reward(success_rate)}")
+                print(f"Epsilon {EPSILON}")
                 timer.report()
 
             with timer("env_step"):
+                #print("Step")
                 obs_new, rewards, terminals, truncations, infos = vecenv.step(actions)
+                #obs_new, rewards, terminals, truncations, infos = [obs_new], [rewards], [terminals], [truncations], [infos]
             #time.sleep(1)
 
             # assumes one env
@@ -220,8 +263,7 @@ if __name__ == '__main__':
                     new_state = obs_new[n]
 
                     if terminals[n] or truncations[n]:
-                        new_state = EMPTY_42_ARRAY
-
+                        new_state = None
                         if rewards[n] == 1.0:
                             #print("Postitive reward!!!")
                             wins += 1
@@ -233,39 +275,40 @@ if __name__ == '__main__':
                     replay.add_experince(trans)
 
             with timer("replay_sampling"):
-                transitions = replay.sample(MINIBATCH_SIZE)
-                if not transitions: # size too small
-                    continue
-                batch = Transition(*zip(*transitions)) # fun trick to go from list of Transitions to a single transition holding a list of rewds, obs, etc  
+                with timer("replay_sampling_p1"):
+                    transitions = replay.sample(MINIBATCH_SIZE)
+                    if not transitions: # size too small
+                        continue
+                with timer("replay_sampling_p2"):
+                    # Reuse pre-allocated arrays - much faster than zip(*transitions)
+                    for i, trans in enumerate(transitions):
+                        batch_states[i] = trans.state
+                        batch_actions[i] = trans.action
+                        batch_rewards[i] = trans.reward
+                        if trans.new_state is None:
+                            batch_new_states[i] = 0
+                            batch_non_terminal_mask[i] = 0
+                        else:
+                            batch_new_states[i] = trans.new_state
+                            batch_non_terminal_mask[i] = 1
 
             with timer("q_target_computation"):
                 with torch.no_grad():
-                    #print(batch.new_state)
-                    non_terminal_mask = torch.tensor(
-                        [s is not None for s in batch.new_state], 
-                        dtype=torch.float32, 
-                        device=device
-                    ).unsqueeze(1)
-
-                    next_states = [s if s is not None else np.zeros_like(batch.state[0]) for s in batch.new_state]
-                    phi_j_plus_1 = torch.as_tensor(np.array(next_states), dtype=torch.float32, device=device)
+                    # Convert pre-built arrays to tensors (much faster than list operations)
+                    non_terminal_mask = torch.from_numpy(batch_non_terminal_mask).unsqueeze(1).to(device)
+                    phi_j_plus_1 = torch.from_numpy(batch_new_states).to(device)
 
                     q_next = policy(phi_j_plus_1)
                     max_next_q = q_next.max(1, keepdim=True)[0]
 
-                    reward = torch.tensor(batch.reward, device=device).unsqueeze(1)
-
+                    reward = torch.from_numpy(batch_rewards).unsqueeze(1).to(device)
                     y_j = reward + GAMMA * max_next_q * non_terminal_mask
 
-                    #print(y_j)
-
             with timer("q_current_computation"):
-                phi_j = torch.tensor(np.array(batch.state), dtype=torch.float32, device=device)
+                phi_j = torch.from_numpy(batch_states).to(device)
                 q_current = policy(phi_j)
-                #print(q_current)
-                #print(torch.tensor(batch.action, device=device))
 
-                action_mask = torch.tensor(batch.action, device=device).unsqueeze(1)
+                action_mask = torch.from_numpy(batch_actions).unsqueeze(1).to(device)
                 q_selected = q_current.gather(1, action_mask)
                 #print(f"Action mask {action_mask}")
                 #print(f"Q selected {q_selected}")
@@ -299,4 +342,3 @@ if __name__ == '__main__':
     profiler.dump_stats('connect4_profile.prof')
     print("\nDetailed profile saved to 'connect4_profile.prof'")
     print("View with: python -m pstats connect4_profile.prof")
-
