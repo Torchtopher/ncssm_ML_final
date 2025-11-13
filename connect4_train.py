@@ -39,57 +39,21 @@ class ReplayMemory():
         return len(self.history)
 
 class DQN(nn.Module):
-    def __init__(self):
+    def __init__(self, obs_size=42, action_size=7):
         super().__init__()
         self.flatten = nn.Flatten()
         self.model = nn.Sequential(
-            nn.Linear(7*6, 512), # 7*6 42 spaces avaiable
+            nn.Linear(obs_size, 512), # 7*6 42 spaces avaiable
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
-            nn.Linear(512, 7), # 7 spaces to play
+            nn.Linear(512, action_size), # 7 spaces to play
         )
 
     def forward(self, x):
         x = self.flatten(x)
         logits = self.model(x) # logits here because the values are straight from the model, not softmaxxed or normalized
         return logits
-
-''' In these experiments, we used the RMSProp algorithm with minibatches of size 32. The behavior
-policy during training was -greedy with  annealed linearly from 1 to 0.1 over the first million
-frames, and fixed at 0.1 thereafter. We trained for a total of 10 million frames and used a replay
-memory of one million most recent frames. '''
-
-EPSILON = 1.0
-EPOCHS = 100_000_000
-MAX_REPLAY_SIZE = 1_000_000
-MIN_EPSILON = 0.1
-MINIBATCH_SIZE = 32
-MAX_GAME_LEN = 42 # can't be more than 42 moves
-#NUM_ENVS = 2 ** 10
-NUM_ENVS = 1
-LEARNING_RATE = 0.1 
-GAMMA = 0.99 # looks forward 100 steps, which should be more than enough
-
-'''
-1. Initialize replay memory D to capacity N 
-2. Initialize action-value function Q with random weights
-3. for episode = 1, M do
-4.    Initialise sequence s1 = {x1} and preprocessed sequenced φ1 = φ(s1)
-5.    for t = 1, T do
-6.        With probability  select a random action at
-7.        otherwise select at = maxa Q∗(φ(st), a; θ)
-8.        Execute action at in emulator and observe reward rt and image xt+1
-        Set st+1 = st, at, xt+1 and preprocess φt+1 = φ(st+1)
-        Store transition (φt, at, rt, φt+1) in D
-        Sample random minibatch of transitions (φj , aj , rj , φj+1) from D
-        Set yj =
-        { rj for terminal φj+1
-        rj + γ maxa′ Q(φj+1, a′; θ) for non-terminal φj+1
-        Perform a gradient descent step on (yj − Q(φj , aj ; θ))2 according to equation 3
-    end for
-end for
-'''
 
 class ProfilingTimer:
     """Simple timing context manager and accumulator"""
@@ -125,6 +89,47 @@ class ProfilingTimer:
             print(f"{name:40s}: {total:8.3f}s total | {avg*1000:8.3f}ms avg | {len(times):6d} calls")
         print("="*60 + "\n")
 
+
+''' In these experiments, we used the RMSProp algorithm with minibatches of size 32. The behavior
+policy during training was -greedy with  annealed linearly from 1 to 0.1 over the first million
+frames, and fixed at 0.1 thereafter. We trained for a total of 10 million frames and used a replay
+memory of one million most recent frames. '''
+
+EPSILON = 1.0
+EPOCHS = 100_000_000
+MAX_REPLAY_SIZE = 1_000_000
+MIN_EPSILON = 0.1
+MINIBATCH_SIZE = 64
+MAX_GAME_LEN = 42 # can't be more than 42 moves
+#NUM_ENVS = 2 ** 10
+NUM_ENVS = 128
+LEARNING_RATE = 1e-4 
+GAMMA = 0.99 # looks forward 100 steps, which should be more than enough
+
+np.random.seed(42)
+torch.random.manual_seed(42)
+
+'''
+1. Initialize replay memory D to capacity N 
+2. Initialize action-value function Q with random weights
+3. for episode = 1, M do
+4.    Initialise sequence s1 = {x1} and preprocessed sequenced φ1 = φ(s1)
+5.    for t = 1, T do
+6.        With probability  select a random action at
+7.        otherwise select at = maxa Q∗(φ(st), a; θ)
+8.        Execute action at in emulator and observe reward rt and image xt+1
+        Set st+1 = st, at, xt+1 and preprocess φt+1 = φ(st+1)
+        Store transition (φt, at, rt, φt+1) in D
+        Sample random minibatch of transitions (φj , aj , rj , φj+1) from D
+        Set yj =
+        { rj for terminal φj+1
+        rj + γ maxa′ Q(φj+1, a′; θ) for non-terminal φj+1
+        Perform a gradient descent step on (yj − Q(φj , aj ; θ))2 according to equation 3
+    end for
+end for
+'''
+
+
 if __name__ == '__main__':
     # Create profiler and timer
     profiler = cProfile.Profile()
@@ -132,13 +137,15 @@ if __name__ == '__main__':
 
     #profiler.enable()
 
+    # connect 4!! 
     env_name = 'puffer_connect4'
     env_creator = pufferlib.ocean.env_creator(env_name)
 
     with timer("env_initialization"):
-        vecenv = pufferlib.vector.make(env_creator, num_envs=2, num_workers=2, batch_size=1,
+        vecenv = pufferlib.vector.make(env_creator, num_envs=10, num_workers=10, batch_size=1,
             #backend=pufferlib.vector.Multiprocessing, env_kwargs={'num_envs': NUM_ENVS})
             backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS})
+
 
     with timer("initial_reset"):
         obs, _ = vecenv.reset()
@@ -157,6 +164,9 @@ if __name__ == '__main__':
     with timer("replay_memory_init"):
         replay = ReplayMemory(MAX_REPLAY_SIZE)
 
+    print(vecenv.single_observation_space)
+    print(vecenv.single_action_space)
+    exit()
     # 2.
     with timer("model_initialization"):
         policy = DQN().to(device) # put on gpu
@@ -165,13 +175,16 @@ if __name__ == '__main__':
     #print(policy)
     success_rate = []
     # 3.
+    wins = 0
+    losses = 1
     for _ in range(EPOCHS):
         with timer("episode_reset"):
             obs, _ = vecenv.reset()
         #print(f"intial obs {obs}")
+
+        success_rate.append(wins / (wins + losses))
         wins = 0
         losses = 1
-        success_rate.append(wins / losses)
         # 6.
         for _ in range(MAX_GAME_LEN):
             with timer("action_selection"):
@@ -192,30 +205,31 @@ if __name__ == '__main__':
             old_obs = obs.copy()
             # 8.
             total_steps += 1
-            if total_steps % 10000 == 0:
+            if total_steps % 100 == 0:
                 print(f"Total steps {total_steps}")
                 print(f"Success rate {np.mean(success_rate[-50:])}")
                 timer.report()
 
             with timer("env_step"):
-                obs1, rewards, terminals, truncations, infos = vecenv.step(actions)
+                obs_new, rewards, terminals, truncations, infos = vecenv.step(actions)
             #time.sleep(1)
 
             # assumes one env
             with timer("replay_buffer_update"):
                 for n in range(NUM_ENVS):
-                    new_state = obs[n]
+                    new_state = obs_new[n]
 
                     if terminals[n] or truncations[n]:
-                        new_state = None
+                        new_state = EMPTY_42_ARRAY
 
                         if rewards[n] == 1.0:
+                            #print("Postitive reward!!!")
                             wins += 1
                         else:
                             losses += 1
 
 
-                    trans = Transition(state=old_obs[n], action=actions[n], reward=rewards[n], new_state=obs[n])
+                    trans = Transition(state=old_obs[n], action=actions[n], reward=rewards[n], new_state=new_state)
                     replay.add_experince(trans)
 
             with timer("replay_sampling"):
@@ -226,18 +240,23 @@ if __name__ == '__main__':
 
             with timer("q_target_computation"):
                 with torch.no_grad():
-                    phi_j_plus_1 = torch.as_tensor(np.array(batch.new_state), dtype=torch.float32, device=device)
-                    with timer("q_target_computation_policy"):
-                        q_next = policy(phi_j_plus_1)
-                    #print(q_next.shape)
+                    #print(batch.new_state)
+                    non_terminal_mask = torch.tensor(
+                        [s is not None for s in batch.new_state], 
+                        dtype=torch.float32, 
+                        device=device
+                    ).unsqueeze(1)
+
+                    next_states = [s if s is not None else np.zeros_like(batch.state[0]) for s in batch.new_state]
+                    phi_j_plus_1 = torch.as_tensor(np.array(next_states), dtype=torch.float32, device=device)
+
+                    q_next = policy(phi_j_plus_1)
                     max_next_q = q_next.max(1, keepdim=True)[0]
-                    #print(max_next_q)
-                    #print(batch.reward)
+
                     reward = torch.tensor(batch.reward, device=device).unsqueeze(1)
 
-                    #print(f"Reward {reward}")
-                    #print(f"Max next q {max_next_q}")
-                    y_j = reward + GAMMA * max_next_q # this probably breaks when there are terminals etc
+                    y_j = reward + GAMMA * max_next_q * non_terminal_mask
+
                     #print(y_j)
 
             with timer("q_current_computation"):
@@ -256,7 +275,6 @@ if __name__ == '__main__':
                 optimizer.zero_grad() # don't want any gradients from the previous loop
                 loss.backward() # do gradient magic
                 optimizer.step() # apply gradients to variables 
-
             #print(f"Loss: {loss.item():.4f}")
 
     # Stop profiler and print results
