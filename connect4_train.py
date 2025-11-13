@@ -49,7 +49,7 @@ class ReplayMemory():
     
     def sample(self, n):
         if self.size < n:
-            return False
+            return False, False, False, False, False
         indices = np.random.randint(0, self.size, size=n)
         return (
             self.states[indices],
@@ -190,7 +190,7 @@ if __name__ == '__main__':
 
     # 1.
     with timer("replay_memory_init"):
-        replay = ReplayMemory(MAX_REPLAY_SIZE)
+        replay = ReplayMemory(MAX_REPLAY_SIZE, vecenv.single_observation_space.shape[0])
 
     # 2.
     with timer("model_initialization"):
@@ -276,39 +276,34 @@ if __name__ == '__main__':
 
             with timer("replay_sampling"):
                 with timer("replay_sampling_p1"):
-                    transitions = replay.sample(MINIBATCH_SIZE)
-                    if not transitions: # size too small
+                    
+                    # self.states[indices],
+                    # self.actions[indices],
+                    # self.rewards[indices],
+                    # self.next_states[indices],
+                    # self.dones[indices]
+                    states, actions, rewards, next_states, done_mask = replay.sample(MINIBATCH_SIZE)
+                    if states is False: # size too small
                         continue
-                with timer("replay_sampling_p2"):
-                    # Reuse pre-allocated arrays - much faster than zip(*transitions)
-                    for i, trans in enumerate(transitions):
-                        batch_states[i] = trans.state
-                        batch_actions[i] = trans.action
-                        batch_rewards[i] = trans.reward
-                        if trans.new_state is None:
-                            batch_new_states[i] = 0
-                            batch_non_terminal_mask[i] = 0
-                        else:
-                            batch_new_states[i] = trans.new_state
-                            batch_non_terminal_mask[i] = 1
+
 
             with timer("q_target_computation"):
                 with torch.no_grad():
                     # Convert pre-built arrays to tensors (much faster than list operations)
-                    non_terminal_mask = torch.from_numpy(batch_non_terminal_mask).unsqueeze(1).to(device)
-                    phi_j_plus_1 = torch.from_numpy(batch_new_states).to(device)
+                    non_terminal_mask = torch.from_numpy(done_mask).unsqueeze(1).to(device)
+                    phi_j_plus_1 = torch.from_numpy(next_states).to(device)
 
                     q_next = policy(phi_j_plus_1)
                     max_next_q = q_next.max(1, keepdim=True)[0]
 
-                    reward = torch.from_numpy(batch_rewards).unsqueeze(1).to(device)
+                    reward = torch.from_numpy(rewards).unsqueeze(1).to(device)
                     y_j = reward + GAMMA * max_next_q * non_terminal_mask
 
             with timer("q_current_computation"):
-                phi_j = torch.from_numpy(batch_states).to(device)
+                phi_j = torch.from_numpy(states).to(device)
                 q_current = policy(phi_j)
 
-                action_mask = torch.from_numpy(batch_actions).unsqueeze(1).to(device)
+                action_mask = torch.from_numpy(actions).unsqueeze(1).to(device)
                 q_selected = q_current.gather(1, action_mask)
                 #print(f"Action mask {action_mask}")
                 #print(f"Q selected {q_selected}")
