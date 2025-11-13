@@ -24,7 +24,6 @@ device = torch.device(
     "cpu"
 )
 
-Transition = namedtuple('Transition', ('state', 'action', 'new_state', 'reward'))
 
 # don't use random.sample on deque! this is what SB3 uses (i think)
 class ReplayMemory():
@@ -38,13 +37,32 @@ class ReplayMemory():
         self.position = 0
         self.size = 0
     
-    def add_experince(self, transition: Transition):
-        idx = self.position
-        self.states[idx] = transition.state
-        self.actions[idx] = transition.action
-        self.rewards[idx] = transition.reward
-        self.next_states[idx] = transition.new_state if transition.new_state is not None else 0
-        self.dones[idx] = 0 if transition.new_state is None else 1
+    def add_experince(self, states, actions, rewards, new_states, terminals, truncations):
+        starting_idx = self.position
+        ending_idx = (self.position + len(states) - 1) % self.capacity
+        if starting_idx > ending_idx:
+            raise NotImplementedError
+            #part1 = a[start_index:]
+            #part2 = a[:end_index]
+            #result = np.concatenate([part1, part2])
+        else:
+            #result = a[start_index:end_index]
+            # print(self.states)
+            # print(self.states.shape)
+            # print(states)
+            # print(states.shape)
+            # print(f"Starting idx {starting_idx} ending {ending_idx}")
+
+            self.states[starting_idx:ending_idx+1] = states
+            #print(self.states)
+            self.actions[starting_idx:ending_idx+1] = actions
+            self.rewards[starting_idx:ending_idx+1] = rewards
+
+            done_mask = np.logical_and(terminals, truncations)
+            #print(f"Done mask {done_mask}")
+            self.dones[starting_idx:ending_idx+1] = done_mask
+            self.next_states[starting_idx:ending_idx+1] = new_states
+
         self.position = (self.position + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
     
@@ -103,12 +121,12 @@ memory of one million most recent frames. '''
 
 EPSILON = 1.0
 EPOCHS = 100_000_000
-MAX_REPLAY_SIZE = 1_000_000
+MAX_REPLAY_SIZE = 100_000
 MIN_EPSILON = 0.1
 MINIBATCH_SIZE = 64
 MAX_GAME_LEN = 42 # can't be more than 42 moves
 #NUM_ENVS = 2 ** 10
-NUM_ENVS = 256
+NUM_ENVS = 128
 LEARNING_RATE = 1e-4 
 GAMMA = 0.99 # looks forward 100 steps, which should be more than enough
 
@@ -161,7 +179,7 @@ if __name__ == '__main__':
     with timer("env_initialization"):
         vecenv = pufferlib.vector.make(env_creator, num_envs=10, num_workers=10, batch_size=1,
             #backend=pufferlib.vector.Multiprocessing, env_kwargs={'num_envs': NUM_ENVS})
-            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS, "size": 5})
+            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS, "size": 3})
 
     # vecenv = pufferlib.ocean.make_bandit()
     # print(vecenv)
@@ -243,6 +261,7 @@ if __name__ == '__main__':
 
             # assumes one env
             with timer("replay_buffer_update"):
+                replay.add_experince(old_obs, actions, rewards, obs_new, terminals, truncations)
                 for n in range(NUM_ENVS):
                     new_state = obs_new[n]
 
@@ -254,9 +273,6 @@ if __name__ == '__main__':
                         else:
                             losses += 1
 
-
-                    trans = Transition(state=old_obs[n], action=actions[n], reward=rewards[n], new_state=new_state)
-                    replay.add_experince(trans)
 
             with timer("replay_sampling"):
                 with timer("replay_sampling_p1"):
