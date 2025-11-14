@@ -25,15 +25,54 @@ device = torch.device(
 )
 
 
+Transition = namedtuple('Transition', ('state', 'action', 'new_state', 'reward'))
+
+# don't use random.sample on deque! this is what SB3 uses (i think)
+class ReplayMemoryPrior():
+    def __init__(self, size, obs_shape):
+        self.capacity = size
+        self.states = np.zeros((size, obs_shape), dtype=np.float32)
+        self.actions = np.zeros(size, dtype=np.int64)
+        self.rewards = np.zeros(size, dtype=np.float32)
+        self.next_states = np.zeros((size, obs_shape), dtype=np.float32)
+        self.dones = np.zeros(size, dtype=np.float32)
+        self.position = 0
+        self.size = 0
+    
+    def add_experince(self, transition: Transition):
+        idx = self.position
+        self.states[idx] = transition.state
+        self.actions[idx] = transition.action
+        self.rewards[idx] = transition.reward
+        self.next_states[idx] = transition.new_state if transition.new_state is not None else 0
+        self.dones[idx] = 0 if transition.new_state is None else 1
+        self.position = (self.position + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
+        #print(f"Slow impl New position {self.position}")
+        #print(f"Slow Replay size before add {self.size}")
+
+    def sample(self, n):
+        if self.size < n:
+            return False, False, False, False, False
+        indices = np.random.randint(0, self.size, size=n)
+        return (
+            self.states[indices],
+            self.actions[indices],
+            self.rewards[indices],
+            self.next_states[indices],
+            self.dones[indices]
+        )
+
+
 # don't use random.sample on deque! this is what SB3 uses (i think)
 class ReplayMemory():
     def __init__(self, size, obs_shape):
         self.capacity = size
-        self.states = np.empty((size, obs_shape), dtype=np.float32)
-        self.actions = np.empty(size, dtype=np.int64)
-        self.rewards = np.empty(size, dtype=np.float32)
-        self.next_states = np.empty((size, obs_shape), dtype=np.float32)
-        self.dones = np.empty(size, dtype=np.float32)
+        self.states = np.zeros((size, obs_shape), dtype=np.float32)
+        self.actions = np.zeros(size, dtype=np.int64)
+        self.rewards = np.zeros(size, dtype=np.float32)
+        self.next_states = np.zeros((size, obs_shape), dtype=np.float32)
+        self.dones = np.zeros(size, dtype=np.float32)
         self.position = 0
         self.size = 0
     
@@ -41,7 +80,24 @@ class ReplayMemory():
         starting_idx = self.position
         ending_idx = (self.position + len(states) - 1) % self.capacity
         if starting_idx > ending_idx:
-            raise NotImplementedError
+            first_part = self.capacity - self.size
+            second_part = len(states) - first_part
+            #print(f"First part {first_part} second part {second_part}")
+            #print(f"Capacity {self.capacity} size {self.size}")
+            #print(f"Trying to add {len(states)} experiences")
+            self.states[self.size:] = states[:first_part]
+            self.states[:second_part] = states[first_part:]
+            self.actions[self.size:] = actions[:first_part]
+            self.actions[:second_part] = actions[first_part:]
+            self.rewards[self.size:] = rewards[:first_part]
+            self.rewards[:second_part] = rewards[first_part:]
+            done_mask = np.logical_not(np.logical_or(terminals, truncations)) # we want 0 to mean there was NO next state
+            self.dones[self.size:] = done_mask[:first_part]
+            self.dones[:second_part] = done_mask[first_part:]
+            new_states[np.logical_or(terminals, truncations)] = 0 # set next state
+            self.next_states[self.size:] = new_states[:first_part]
+            self.next_states[:second_part] = new_states[first_part:]
+
             #part1 = a[start_index:]
             #part2 = a[:end_index]
             #result = np.concatenate([part1, part2])
@@ -51,21 +107,25 @@ class ReplayMemory():
             # print(self.states.shape)
             # print(states)
             # print(states.shape)
-            # print(f"Starting idx {starting_idx} ending {ending_idx}")
+            #print(f"Starting idx {starting_idx} ending {ending_idx}")
 
             self.states[starting_idx:ending_idx+1] = states
             #print(self.states)
             self.actions[starting_idx:ending_idx+1] = actions
+            #print(f"Actions stored {self.actions[starting_idx:ending_idx+1]}")
             self.rewards[starting_idx:ending_idx+1] = rewards
 
-            done_mask = np.logical_and(terminals, truncations)
+            done_mask = np.logical_not(np.logical_or(terminals, truncations)) # we want 0 to mean there was NO next state
             #print(f"Done mask {done_mask}")
             self.dones[starting_idx:ending_idx+1] = done_mask
+            new_states[np.logical_or(terminals, truncations)] = 0 # set next state to 0 if done
             self.next_states[starting_idx:ending_idx+1] = new_states
 
-        self.position = (self.position + 1) % self.capacity
-        self.size = min(self.size + 1, self.capacity)
-    
+        self.position = (self.position + len(states) - 1) % self.capacity + 1
+        #print(f"Fast impl New position {self.position}")
+        self.size = min(self.size + len(states), self.capacity)
+        #print(f"Fast Replay size before add {self.size}")
+
     def sample(self, n):
         if self.size < n:
             return False, False, False, False, False
@@ -121,12 +181,12 @@ memory of one million most recent frames. '''
 
 EPSILON = 1.0
 EPOCHS = 100_000_000
-MAX_REPLAY_SIZE = 100_000
+MAX_REPLAY_SIZE = 1_000_000
 MIN_EPSILON = 0.1
 MINIBATCH_SIZE = 64
 MAX_GAME_LEN = 42 # can't be more than 42 moves
 #NUM_ENVS = 2 ** 10
-NUM_ENVS = 128
+NUM_ENVS = 256
 LEARNING_RATE = 1e-4 
 GAMMA = 0.99 # looks forward 100 steps, which should be more than enough
 
@@ -179,7 +239,7 @@ if __name__ == '__main__':
     with timer("env_initialization"):
         vecenv = pufferlib.vector.make(env_creator, num_envs=10, num_workers=10, batch_size=1,
             #backend=pufferlib.vector.Multiprocessing, env_kwargs={'num_envs': NUM_ENVS})
-            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS, "size": 3})
+            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS, "size": 5})
 
     # vecenv = pufferlib.ocean.make_bandit()
     # print(vecenv)
@@ -193,7 +253,7 @@ if __name__ == '__main__':
     # 1.
     with timer("replay_memory_init"):
         replay = ReplayMemory(MAX_REPLAY_SIZE, vecenv.single_observation_space.shape[0])
-
+        replay_old = ReplayMemoryPrior(MAX_REPLAY_SIZE, vecenv.single_observation_space.shape[0])
     # 2.
     with timer("model_initialization"):
         policy = DQN(obs_size=vecenv.single_observation_space.shape[0], action_size=vecenv.single_action_space.n).to(device) # put on gpu
@@ -274,6 +334,37 @@ if __name__ == '__main__':
                             losses += 1
 
 
+                    trans = Transition(state=old_obs[n], action=actions[n], reward=rewards[n], new_state=new_state)
+                    replay_old.add_experince(trans)
+            
+            #print(replay_old.actions)
+            #print(replay.actions)
+           # assert np.array_equal(replay_old.actions, replay.actions)
+            # if not np.array_equal(replay_old.states, replay.states):
+            #     diff_mask = replay_old.states != replay.states
+            #     diff_indices = np.where(diff_mask)[0]
+            #     print(f"Arrays differ at indices: {diff_indices}")
+            #     print(f"Old values at those indices: {replay_old.states[diff_indices]}")
+            #     print(f"New values at those indices: {replay.states[diff_indices]}")
+            #     exit()
+            # assert np.array_equal(replay_old.states, replay.states)
+            # assert np.array_equal(replay_old.rewards, replay.rewards)
+            # #print(f"Replay old {replay_old.dones}")
+            # #print(f"Replay new {replay.dones}")
+            # assert np.array_equal(replay_old.dones, replay.dones)
+            # #print(f"Replay old next states {replay_old.next_states}")
+            # #print(f"Replay new next states {replay.next_states}")
+            # # assert np.array_equal(replay_old.next_states, replay.next_states)
+            # if not np.array_equal(replay_old.next_states, replay.next_states):
+            #     diff_mask = replay_old.next_states != replay.next_states
+            #     diff_indices = np.where(diff_mask)[0]
+            #     print(f"Arrays differ at indices: {diff_indices}")
+            #     print(f"Old values at those indices: {replay_old.next_states[diff_indices]}")
+            #     print(f"New values at those indices: {replay.next_states[diff_indices]}")
+            #     exit()
+
+            
+
             with timer("replay_sampling"):
                 with timer("replay_sampling_p1"):
                     
@@ -282,7 +373,9 @@ if __name__ == '__main__':
                     # self.rewards[indices],
                     # self.next_states[indices],
                     # self.dones[indices]
-                    states, actions, rewards, next_states, done_mask = replay.sample(MINIBATCH_SIZE)
+                    #states, actions, rewards, next_states, done_mask = replay.sample(MINIBATCH_SIZE)
+                    states, actions, rewards, next_states, done_mask = replay_old.sample(MINIBATCH_SIZE)
+
                     if states is False: # size too small
                         continue
 

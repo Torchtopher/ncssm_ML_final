@@ -6,5 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "gymnasium[box2d]>=1.2.2",
+    "pytest>=9.0.1",
     "stable-baselines3[extra]>=2.7.0",
 ]
