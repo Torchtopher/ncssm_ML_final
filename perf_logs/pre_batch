@@ -1,0 +1,19 @@
+============================================================
+PROFILING REPORT
+============================================================
+action_selection                        :    2.894s total |    0.145ms avg |  19900 calls
+env_initialization                      :    0.001s total |    1.342ms avg |      1 calls
+env_step                                :    0.444s total |    0.022ms avg |  19899 calls
+episode_reset                           :    0.055s total |    0.116ms avg |    474 calls
+initial_reset                           :    0.000s total |    0.124ms avg |      2 calls
+loss_and_backprop                       :   16.265s total |    0.817ms avg |  19899 calls
+model_initialization                    :    0.604s total |  604.028ms avg |      1 calls
+q_current_computation                   :    3.503s total |    0.176ms avg |  19899 calls
+q_target_computation                    :    5.059s total |    0.254ms avg |  19899 calls
+replay_buffer_update                    :   20.257s total |    1.018ms avg |  19899 calls
+replay_memory_init                      :    0.000s total |    0.270ms avg |      1 calls
+replay_sampling                         :    0.525s total |    0.026ms avg |  19899 calls
+replay_sampling_p1                      :    0.506s total |    0.025ms avg |  19899 calls
+============================================================
+
+# while using the slow batch

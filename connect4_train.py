@@ -79,10 +79,14 @@ class ReplayMemory():
     def add_experince(self, states, actions, rewards, new_states, terminals, truncations):
         starting_idx = self.position
         ending_idx = (self.position + len(states) - 1) % self.capacity
+
+        # Create a copy of new_states to avoid mutating the input
+        new_states_copy = new_states.copy()
+
         if starting_idx > ending_idx:
             first_part = self.capacity - self.position
             second_part = len(states) - first_part
-            print("Got wrap around")
+            #print("Got wrap around")
             #print(f"First part {first_part} second part {second_part}")
             #print(f"Capacity {self.capacity} size {self.size}")
             #print(f"Trying to add {len(states)} experiences")
@@ -95,9 +99,9 @@ class ReplayMemory():
             done_mask = np.logical_not(np.logical_or(terminals, truncations)) # we want 0 to mean there was NO next state
             self.dones[self.position:] = done_mask[:first_part]
             self.dones[:second_part] = done_mask[first_part:]
-            new_states[np.logical_or(terminals, truncations)] = 0 # set next state
-            self.next_states[self.position:] = new_states[:first_part]
-            self.next_states[:second_part] = new_states[first_part:]
+            new_states_copy[np.logical_or(terminals, truncations)] = 0 # set next state
+            self.next_states[self.position:] = new_states_copy[:first_part]
+            self.next_states[:second_part] = new_states_copy[first_part:]
 
             #part1 = a[start_index:]
             #part2 = a[:end_index]
@@ -119,8 +123,8 @@ class ReplayMemory():
             done_mask = np.logical_not(np.logical_or(terminals, truncations)) # we want 0 to mean there was NO next state
             #print(f"Done mask {done_mask}")
             self.dones[starting_idx:ending_idx+1] = done_mask
-            new_states[np.logical_or(terminals, truncations)] = 0 # set next state to 0 if done
-            self.next_states[starting_idx:ending_idx+1] = new_states
+            new_states_copy[np.logical_or(terminals, truncations)] = 0 # set next state to 0 if done
+            self.next_states[starting_idx:ending_idx+1] = new_states_copy
 
         self.position = (self.position + len(states) - 1) % self.capacity + 1
         #print(f"Fast impl New position {self.position}")
@@ -328,35 +332,35 @@ if __name__ == '__main__':
                             losses += 1
 
 
-                    trans = Transition(state=old_obs[n], action=actions[n], reward=rewards[n], new_state=new_state)
-                    replay_old.add_experince(trans)
-                replay.add_experince(old_obs.copy(), actions.copy(), rewards.copy(), obs_new.copy(), terminals.copy(), truncations.copy())
+                    #trans = Transition(state=old_obs[n], action=actions[n], reward=rewards[n], new_state=new_state)
+                    #replay_old.add_experince(trans)
+                replay.add_experince(old_obs, actions, rewards, obs_new, terminals, truncations)
 
             #print(replay_old.actions)
             #print(replay.actions)
-            #assert np.array_equal(replay_old.actions, replay.actions)
-            if not np.array_equal(replay_old.states, replay.states):
-                diff_mask = replay_old.states != replay.states
-                diff_indices = np.where(diff_mask)[0]
-                print(f"State Arrays differ at indices: {diff_indices}")
-                print(f"Old values at those indices: {replay_old.states[diff_indices]}")
-                print(f"New values at those indices: {replay.states[diff_indices]}")
-                exit()
-            assert np.array_equal(replay_old.states, replay.states)
-            assert np.array_equal(replay_old.rewards, replay.rewards)
-            #print(f"Replay old {replay_old.dones}")
-            #print(f"Replay new {replay.dones}")
-            assert np.array_equal(replay_old.dones, replay.dones)
-            #print(f"Replay old next states {replay_old.next_states}")
-            #print(f"Replay new next states {replay.next_states}")
-            # assert np.array_equal(replay_old.next_states, replay.next_states)
-            if not np.array_equal(replay_old.next_states, replay.next_states):
-                diff_mask = replay_old.next_states != replay.next_states
-                diff_indices = np.where(diff_mask)[0]
-                print(f"Next State Arrays differ at indices: {diff_indices}")
-                print(f"Old values at those indices: {replay_old.next_states[diff_indices]}")
-                print(f"New values at those indices: {replay.next_states[diff_indices]}")
-                exit()
+            # assert np.array_equal(replay_old.actions, replay.actions)
+            # if not np.array_equal(replay_old.states, replay.states):
+            #     diff_mask = replay_old.states != replay.states
+            #     diff_indices = np.where(diff_mask)[0]
+            #     print(f"State Arrays differ at indices: {diff_indices}")
+            #     print(f"Old values at those indices: {replay_old.states[diff_indices]}")
+            #     print(f"New values at those indices: {replay.states[diff_indices]}")
+            #     exit()
+            # assert np.array_equal(replay_old.states, replay.states)
+            # assert np.array_equal(replay_old.rewards, replay.rewards)
+            # #print(f"Replay old {replay_old.dones}")
+            # #print(f"Replay new {replay.dones}")
+            # assert np.array_equal(replay_old.dones, replay.dones)
+            # #print(f"Replay old next states {replay_old.next_states}")
+            # #print(f"Replay new next states {replay.next_states}")
+            # # assert np.array_equal(replay_old.next_states, replay.next_states)
+            # if not np.array_equal(replay_old.next_states, replay.next_states):
+            #     diff_mask = replay_old.next_states != replay.next_states
+            #     diff_indices = np.where(diff_mask)[0]
+            #     print(f"Next State Arrays differ at indices: {diff_indices}")
+            #     print(f"Old values at those indices: {replay_old.next_states[diff_indices]}")
+            #     print(f"New values at those indices: {replay.next_states[diff_indices]}")
+            #     exit()
 
             
 
@@ -368,8 +372,9 @@ if __name__ == '__main__':
                     # self.rewards[indices],
                     # self.next_states[indices],
                     # self.dones[indices]
-                    #states, actions, rewards, next_states, done_mask = replay.sample(MINIBATCH_SIZE)
-                    states, actions, rewards, next_states, done_mask = replay_old.sample(MINIBATCH_SIZE)
+                    states, actions, rewards, next_states, done_mask = replay.sample(MINIBATCH_SIZE)
+                    #print("Sampled from new replay buffer")
+                    #states, actions, rewards, next_states, done_mask = replay_old.sample(MINIBATCH_SIZE)
 
                     if states is False: # size too small
                         continue

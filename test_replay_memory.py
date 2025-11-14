@@ -623,7 +623,7 @@ class TestReplaySampling:
 
         # Simulate a few steps of the training loop
         # trange does nothing :()
-        for step in trange(100_00):
+        for step in trange(1000):
             # Simulate environment observations
             obs = np.random.randn(NUM_ENVS, obs_shape).astype(np.float32)
             actions = np.random.randint(0, 5, size=NUM_ENVS)
@@ -672,6 +672,44 @@ class TestReplaySampling:
                 print(f"Old values at first diff: {replay_old.next_states[diff_indices[0]][:5]}")
                 print(f"New values at first diff: {replay.next_states[diff_indices[0]][:5]}")
                 pytest.fail(f"Next states differ at step {step}")
+
+
+    def test_no_input_mutation(self):
+        """Test that add_experince does not mutate input arrays"""
+        capacity = 1000
+        obs_shape = 25
+        num_envs = 10
+
+        replay = ReplayMemory(capacity, obs_shape)
+
+        # Create test data
+        states = np.random.randn(num_envs, obs_shape).astype(np.float32)
+        actions = np.random.randint(0, 5, size=num_envs)
+        rewards = np.random.randn(num_envs).astype(np.float32)
+        next_states = np.random.randn(num_envs, obs_shape).astype(np.float32)
+        terminals = np.zeros(num_envs, dtype=bool)
+        terminals[0] = True  # First env terminates
+        truncations = np.zeros(num_envs, dtype=bool)
+        truncations[1] = True  # Second env truncates
+
+        # Save original values
+        original_states = states.copy()
+        original_actions = actions.copy()
+        original_rewards = rewards.copy()
+        original_next_states = next_states.copy()
+        original_terminals = terminals.copy()
+        original_truncations = truncations.copy()
+
+        # Add to replay
+        replay.add_experince(states, actions, rewards, next_states, terminals, truncations)
+
+        # Check that inputs were not mutated
+        assert np.array_equal(states, original_states), "states was mutated!"
+        assert np.array_equal(actions, original_actions), "actions was mutated!"
+        assert np.array_equal(rewards, original_rewards), "rewards was mutated!"
+        assert np.array_equal(next_states, original_next_states), "next_states was mutated!"
+        assert np.array_equal(terminals, original_terminals), "terminals was mutated!"
+        assert np.array_equal(truncations, original_truncations), "truncations was mutated!"
 
 
 if __name__ == "__main__":

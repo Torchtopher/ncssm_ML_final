@@ -1,0 +1,19 @@
+============================================================
+PROFILING REPORT
+============================================================
+action_selection                        :    2.228s total |    0.132ms avg |  16900 calls
+env_initialization                      :    0.001s total |    1.349ms avg |      1 calls
+env_step                                :    0.293s total |    0.017ms avg |  16899 calls
+episode_reset                           :    0.045s total |    0.111ms avg |    403 calls
+initial_reset                           :    0.000s total |    0.124ms avg |      2 calls
+loss_and_backprop                       :   13.049s total |    0.772ms avg |  16899 calls
+model_initialization                    :    0.617s total |  617.143ms avg |      1 calls
+q_current_computation                   :    2.905s total |    0.172ms avg |  16899 calls
+q_target_computation                    :    3.939s total |    0.233ms avg |  16899 calls
+replay_buffer_update                    :    1.521s total |    0.090ms avg |  16899 calls
+replay_memory_init                      :    0.000s total |    0.258ms avg |      1 calls
+replay_sampling                         :    0.467s total |    0.028ms avg |  16899 calls
+replay_sampling_p1                      :    0.455s total |    0.027ms avg |  16899 calls
+============================================================
+
+# using batch replay buffer
