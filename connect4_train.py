@@ -186,8 +186,8 @@ memory of one million most recent frames. '''
 
 EPSILON = 1.0
 EPOCHS = 100_000_000
-MAX_REPLAY_SIZE = 1_000_0
-MIN_EPSILON = 0.1
+MAX_REPLAY_SIZE = 1_000_00
+MIN_EPSILON = 0.05
 MINIBATCH_SIZE = 64
 MAX_GAME_LEN = 42 # can't be more than 42 moves
 #NUM_ENVS = 2 ** 10
@@ -238,13 +238,14 @@ if __name__ == '__main__':
     #profiler.enable()
 
     # connect 4!! 
-    env_name = 'puffer_squared'
+    #env_name = 'puffer_squared'
+    env_name = 'puffer_connect4'
     env_creator = pufferlib.ocean.env_creator(env_name)
 
     with timer("env_initialization"):
         vecenv = pufferlib.vector.make(env_creator, num_envs=10, num_workers=10, batch_size=1,
-            #backend=pufferlib.vector.Multiprocessing, env_kwargs={'num_envs': NUM_ENVS})
-            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS, "size": 5})
+            backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS}) # c4
+            #backend=pufferlib.vector.Serial, env_kwargs={'num_envs': NUM_ENVS, "size": 5}) # squared
 
     # vecenv = pufferlib.ocean.make_bandit()
     # print(vecenv)
@@ -300,8 +301,8 @@ if __name__ == '__main__':
                         actions = torch.argmax(policy(batch_obs), dim=1).cpu() # index 0-6 is actual the action too
 
             # lower over 1m frames
-            EPSILON = max(MIN_EPSILON, EPSILON - (1.0 - MIN_EPSILON) / 1_000_0)
-            if recent_reward(success_rate) > 0.8:
+            EPSILON = max(MIN_EPSILON, EPSILON - (1.0 - MIN_EPSILON) / 1_000_00)
+            if recent_reward(success_rate) > 0.8 or total_steps > 500_000:
                 EPSILON = 0.0
             old_obs = obs.copy()
             # 8.
