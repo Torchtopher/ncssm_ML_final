@@ -39,11 +39,16 @@ obs, i = vecenv.reset()
 done = False
 while not done:
     batch_obs = torch.tensor(obs, dtype=torch.float32, device=device)
+    print(f"Obs: {batch_obs}")
+    time.sleep(1)
     actions = torch.argmax(policy(batch_obs), dim=1).cpu()
+    vecenv.driver_env.render()
+
     obs, rewards, terminals, truncations, infos = vecenv.step(actions)
     if rewards[0]:
         print(f"Reward was {rewards[0]}")
+        vecenv.driver_env.render()
+        time.sleep(3)
         obs, i = vecenv.reset(random.randint(1, 10000))
 
     vecenv.driver_env.render()
-    time.sleep(0.5)
